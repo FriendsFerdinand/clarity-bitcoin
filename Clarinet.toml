@@ -16,6 +16,11 @@ path = "contracts/clarity-bitcoin.clar"
 clarity_version = 2
 epoch = 2.1
 
+[contracts.clarity-bitcoin-segwit]
+path = "contracts/clarity-bitcoin-segwit.clar"
+clarity_version = 2
+epoch = 2.1
+
 [contracts.clarity-bitcoin-helper]
 path = "contracts/clarity-bitcoin-helper.clar"
 clarity_version = 2
