@@ -112,7 +112,6 @@
 ;; Returns (err ERR-TOO-MANY-TXINS) if there are more than eight inputs to read.
 (define-read-only (read-next-txin (ignored bool)
                                   (state-res (response {ctx: { txbuff: (buff 1024), index: uint },
-                                                        remaining: uint,
                                                         txins: (list 8 {outpoint: {
                                                                                    hash: (buff 32),
                                                                                    index: uint},
@@ -121,27 +120,23 @@
                                               uint)))
     (match state-res
         state
-            (if (< u0 (get remaining state))
-                (let ((remaining (get remaining state))
-                      (ctx (get ctx state))
-                      (parsed-hash (try! (read-hashslice ctx)))
-                      (parsed-index (try! (read-uint32 (get ctx parsed-hash))))
-                      (parsed-scriptSig (try! (read-varslice (get ctx parsed-index))))
-                      (parsed-sequence (try! (read-uint32 (get ctx parsed-scriptSig))))
-                      (new-ctx (get ctx parsed-sequence)))
-                 (ok {ctx: new-ctx,
-                      remaining: (- remaining u1),
-                      txins: (unwrap!
-                              (as-max-len?
-                                  (append (get txins state)
-                                      {   outpoint: {
-                                                     hash: (get hashslice parsed-hash),
-                                                     index: (get uint32 parsed-index) },
-                                          scriptSig: (unwrap! (as-max-len? (get varslice parsed-scriptSig) u256) (err ERR-VARSLICE-TOO-LONG)),
-                                          sequence: (get uint32 parsed-sequence)})
-                               u8)
-                              (err ERR-TOO-MANY-TXINS))}))
-                (ok state))
+          (let ((ctx (get ctx state))
+                (parsed-hash (try! (read-hashslice ctx)))
+                (parsed-index (try! (read-uint32 (get ctx parsed-hash))))
+                (parsed-scriptSig (try! (read-varslice (get ctx parsed-index))))
+                (parsed-sequence (try! (read-uint32 (get ctx parsed-scriptSig))))
+                (new-ctx (get ctx parsed-sequence)))
+            (ok {ctx: new-ctx,
+                txins: (unwrap!
+                        (as-max-len?
+                            (append (get txins state)
+                                {   outpoint: {
+                                                hash: (get hashslice parsed-hash),
+                                                index: (get uint32 parsed-index) },
+                                    scriptSig: (unwrap! (as-max-len? (get varslice parsed-scriptSig) u256) (err ERR-VARSLICE-TOO-LONG)),
+                                    sequence: (get uint32 parsed-sequence)})
+                          u8)
+                        (err ERR-TOO-MANY-TXINS))}))
         error
             (err error)))
 
@@ -156,7 +151,7 @@
           (new-ctx (get ctx parsed-num-txins)))
      (if (> num-txins u8)
          (err ERR-TOO-MANY-TXINS)
-         (fold read-next-txin (unwrap-panic (slice? (list true true true true true true true true) u0 num-txins)) (ok { ctx: new-ctx, remaining: num-txins, txins: (list)})))))
+         (fold read-next-txin (unwrap-panic (slice? (list true true true true true true true true) u0 num-txins)) (ok { ctx: new-ctx, txins: (list)})))))
 
 ;; Read the next transaction output, and update the index in ctx to point to the next output.
 ;; Returns (ok { ... }) on success
@@ -165,27 +160,22 @@
 ;; Returns (err ERR-TOO-MANY-TXOUTS) if there are more than eight outputs to read.
 (define-read-only (read-next-txout (ignored bool)
                                    (state-res (response {ctx: { txbuff: (buff 1024), index: uint },
-                                                         remaining: uint,
                                                          txouts: (list 8 {value: uint,
                                                                           scriptPubKey: (buff 128)})}
                                                uint)))
     (match state-res
         state
-            (if (< u0 (get remaining state))
-                (let ((remaining (get remaining state))
-                      (parsed-value (try! (read-uint64 (get ctx state))))
-                      (parsed-script (try! (read-varslice (get ctx parsed-value))))
-                      (new-ctx (get ctx parsed-script)))
-                 (ok {ctx: new-ctx,
-                      remaining: (- remaining u1),
-                      txouts: (unwrap!
-                               (as-max-len?
-                                   (append (get txouts state)
-                                       {   value: (get uint64 parsed-value),
-                                           scriptPubKey: (unwrap! (as-max-len? (get varslice parsed-script) u128) (err ERR-VARSLICE-TOO-LONG))})
-                                u8)
-                               (err ERR-TOO-MANY-TXOUTS))}))
-                (ok state))
+          (let ((parsed-value (try! (read-uint64 (get ctx state))))
+                (parsed-script (try! (read-varslice (get ctx parsed-value))))
+                (new-ctx (get ctx parsed-script)))
+            (ok {ctx: new-ctx,
+                txouts: (unwrap!
+                          (as-max-len?
+                              (append (get txouts state)
+                                  {   value: (get uint64 parsed-value),
+                                      scriptPubKey: (unwrap! (as-max-len? (get varslice parsed-script) u128) (err ERR-VARSLICE-TOO-LONG))})
+                          u8)
+                          (err ERR-TOO-MANY-TXOUTS))}))
         error
             (err error)))
 
@@ -200,7 +190,7 @@
           (new-ctx (get ctx parsed-num-txouts)))
      (if (> num-txouts u8)
          (err ERR-TOO-MANY-TXOUTS)
-         (fold read-next-txout (unwrap-panic (slice? (list true true true true true true true true) u0 num-txouts)) (ok { ctx: new-ctx, remaining: num-txouts, txouts: (list)})))))
+         (fold read-next-txout (unwrap-panic (slice? (list true true true true true true true true) u0 num-txouts)) (ok { ctx: new-ctx, txouts: (list)})))))
 
 ;; Helper functions for smart contract that want to use information of a Bitcoin transaction
 ;;
