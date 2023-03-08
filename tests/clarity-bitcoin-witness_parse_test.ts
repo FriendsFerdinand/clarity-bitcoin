@@ -13,6 +13,8 @@ Clarinet.test({
     let block = chain.mineBlock([
       readWitnesses(
         "0x000000040047304402202c3f94e5daf4057377d9f16d45b57e962de42fb42cb7e95a0382b7c66624980a02204098f6acd43b0391ea1b4a8102797e78895848fb7e883f98d207d14d45945a69014730440220448460edd5291a548c571ccf3a72caf47b02364035dc84f420d311e3a0c5494802205bb1cc89f20dc1e2c1f6eadb74898f8eecc46fbf488b676636b45fafaeb96e0f01695221021e6617e06bb90f621c3800e8c37ab081a445ae5527f6c5f68a022e7133f9b5fe2103bea1a8ce6369435bb74ff1584a136a7efeebfe4bc320b4d59113c92acd869f38210280631b27700baf7d472483fadfe1c4a7340a458f28bf6bae5d3234312d684c6553ae",
+        0,
+        4,
         deployer
       )
       // parseTx(
@@ -20,8 +22,8 @@ Clarinet.test({
       //   deployer
       // ),
     ]);
-    
-    console.log(block.receipts[0].result.expectOk().expectTuple());
+    console.log(block.receipts[0]);
+    console.log(JSON.stringify(block.receipts[0].result.expectOk().expectTuple(), null, 4));
 
     // expectTxObject(block, {
     //   ins: [

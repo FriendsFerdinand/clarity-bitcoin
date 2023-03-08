@@ -202,18 +202,56 @@
          (err ERR-TOO-MANY-TXOUTS)
          (fold read-next-txout (unwrap-panic (slice? (list true true true true true true true true) u0 num-txouts)) (ok { ctx: new-ctx, remaining: num-txouts, txouts: (list)})))))
 
-(define-read-only (read-next-witness (ctx { txbuff: (buff 1024), index: uint}))
-  (let ((parsed-num-items (try! (read-varint ctx))))
-    (asserts! true (err u1))
-    (ok { parsed: (get varint parsed-num-items), ctx: { txbuff: (get txbuff ctx), index: (get index ctx) } })
+(define-read-only (read-next-element (ignored bool)
+                                   (state-res (response {ctx: { txbuff: (buff 1024), index: uint },
+                                                         elements: (list 8 (buff 128))}
+                                               uint)))
+    (match state-res
+        state
+          (let ((parsed-script (try! (read-varslice (get ctx state))))
+                (new-ctx (get ctx parsed-script)))
+            (ok {ctx: new-ctx,
+                elements: (unwrap!
+                          (as-max-len?
+                              (append (get elements state) (unwrap! (as-max-len? (get varslice parsed-script) u128) (err ERR-VARSLICE-TOO-LONG)))
+                          u8)
+                          (err ERR-TOO-MANY-TXOUTS))}))
+        error
+            (err error)))
+
+(define-read-only (read-next-witness (ignored bool)
+  (state-res (response
+    { ctx: {txbuff: (buff 1024), index: uint}, witnesses: (list 8 (list 8 (buff 128))) } uint)))
+  (match state-res
+    state (let (
+      (parsed-num-items (try! (read-varint (get ctx state))))
+      (ctx (get ctx parsed-num-items))
+      (varint (get varint parsed-num-items)))
+        (if (> varint u0)
+          (let ((parsed-elements (try! (fold read-next-element (unwrap-panic (slice? (list true true true true true true true true) u0 varint)) (ok { ctx: ctx, elements: (list)})))))
+            (ok {
+              witnesses: (unwrap-panic (as-max-len? (append (get witnesses state) (get elements parsed-elements)) u8)),
+              ctx: (get ctx parsed-num-items)
+            })
+          )
+          (begin
+            (asserts! true (err u1))
+            (ok {
+              witnesses: (unwrap-panic (as-max-len? (append (get witnesses state) (list)) u8)),
+              ctx: ctx
+            })
+          )
+        )
+      )
+    error (err u1)
   )
 )
 
-(define-read-only (read-witnesses (witness-slice (buff 1024)))
-  (let ((new-ctx { ctx: witness-slice, index: u0 }))
+(define-public (read-witnesses (ctx { txbuff: (buff 1024), index: uint }) (num-txins uint))
+  (let ((new-ctx { ctx: ctx }))
     (asserts! true (err u1))
-    (fold read-onext-witness (list true) (ok { ctx: new-ctx }))
-    (read-next-witness { txbuff: witness-slice, index: u0 })
+    (fold read-next-witness (unwrap-panic (slice? (list true true true true true true true true) u0 num-txins)) (ok (merge new-ctx { witnesses: (list (list)) })))
+    ;; (read-next-witness { txbuff: witness-slice, index: u0 })
   )
 )
 
@@ -287,16 +325,18 @@
 ;; Returns true if so; false if not.
 (define-read-only (verify-block-header (headerbuff (buff 80)) (expected-block-height uint))
     (match (get-bc-h-hash expected-block-height)
-        bhh (is-eq bhh (reverse-buff32 (SHA-256d headerbuff)))
+        bhh (is-eq bhh (reverse-buff32 (sha256 (sha256 headerbuff))))
         false))
 
-(define-read-only (SHA-256d (data (buff 1024)))
-  (sha256 (sha256 data)))
+;; Get the txid of a transaction, but little-endian.
+;; This is the reverse of what you see on block explorers.
+(define-read-only (get-reversed-txid (tx (buff 1024)))
+    (sha256 (sha256 tx)))
 
 ;; Get the txid of a transaction.
 ;; This is what you see on block explorers.
 (define-read-only (get-txid (tx (buff 1024)))
-    (reverse-buff32 (SHA-256d tx)))
+    (reverse-buff32 (sha256 (sha256 tx))))
 
 ;; Determine if the ith bit in a uint is set to 1
 (define-read-only (is-bit-set (val uint) (bit uint))
@@ -321,7 +361,7 @@
 
                   (h1 (if is-left (unwrap-panic (element-at proof-hashes ctr)) cur-hash))
                   (h2 (if is-left cur-hash (unwrap-panic (element-at proof-hashes ctr))))
-                  (next-hash (SHA-256d (concat h1 h2)))
+                  (next-hash (sha256 (sha256 (concat h1 h2))))
                   (is-verified (and (is-eq (+ u1 ctr) (len proof-hashes)) (is-eq next-hash root-hash))))
              (merge state { cur-hash: next-hash, verified: is-verified})))))
 
@@ -376,5 +416,5 @@
 ;; This function must only called with the merkle root of the provided header
 (define-private (was-tx-mined-internal (height uint) (tx (buff 1024)) (header (buff 80)) (merkle-root (buff 32)) (proof { tx-index: uint, hashes: (list 14 (buff 32)), tree-depth: uint}))
     (if (verify-block-header header height)
-        (verify-merkle-proof (SHA-256d tx) (reverse-buff32 merkle-root) proof)
+        (verify-merkle-proof (get-reversed-txid tx) (reverse-buff32 merkle-root) proof)
         (err u1)))

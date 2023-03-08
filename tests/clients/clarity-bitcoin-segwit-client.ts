@@ -8,8 +8,14 @@ export function parseTx(tx: string, deployer: Account) {
   return Tx.contractCall("clarity-bitcoin-segwit", "parse-tx", [tx], deployer.address);
 }
 
-export function readWitnesses(tx: string, deployer: Account) {
-  return Tx.contractCall("clarity-bitcoin-segwit", "read-witnesses", [tx], deployer.address);
+export function readWitnesses(txbuff: string, index: number, numTxins: number, deployer: Account) {
+  return Tx.contractCall("clarity-bitcoin-segwit", "read-witnesses", [
+    types.tuple({
+      txbuff,
+      index: types.uint(index)
+    }),
+    types.uint(numTxins)
+  ], deployer.address);
 }
 
 export function parseBlockHeader(headerBuff: Uint8Array, deployer: Account) {
