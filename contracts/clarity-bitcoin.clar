@@ -287,8 +287,6 @@
 (define-read-only (inner-merkle-proof-verify (ctr uint) (state { path: uint, root-hash: (buff 32), proof-hashes: (list 14 (buff 32)), tree-depth: uint, cur-hash: (buff 32), verified: bool}))
     (if (get verified state)
         state
-        (if (>= ctr (get tree-depth state))
-            (merge state { verified: false})
             (let ((path (get path state))
                   (is-left (is-bit-set path ctr))
                   (proof-hashes (get proof-hashes state))
@@ -299,7 +297,7 @@
                   (h2 (if is-left cur-hash (unwrap-panic (element-at proof-hashes ctr))))
                   (next-hash (sha256 (sha256 (concat h1 h2))))
                   (is-verified (and (is-eq (+ u1 ctr) (len proof-hashes)) (is-eq next-hash root-hash))))
-             (merge state { cur-hash: next-hash, verified: is-verified})))))
+             (merge state { cur-hash: next-hash, verified: is-verified}))))
 
 ;; Verify a Merkle proof, given the _reversed_ txid of a transaction, the merkle root of its block, and a proof consisting of:
 ;; * The index in the block where the transaction can be found (starting from 0),
@@ -317,7 +315,7 @@
         (ok
           (get verified
               (fold inner-merkle-proof-verify
-                  (list u0 u1 u2 u3 u4 u5 u6 u7 u8 u9 u10 u11 u12 u13)
+                  (unwrap-panic (slice? (list u0 u1 u2 u3 u4 u5 u6 u7 u8 u9 u10 u11 u12 u13) u0 (get tree-depth proof)))
                   { path: (+ (pow u2 (get tree-depth proof)) (get tx-index proof)), root-hash: merkle-root, proof-hashes: (get hashes proof), cur-hash: reversed-txid, tree-depth: (get tree-depth proof), verified: false})))))
 
 ;; Top-level verification code to determine whether or not a Bitcoin transaction was mined in a prior Bitcoin block.
