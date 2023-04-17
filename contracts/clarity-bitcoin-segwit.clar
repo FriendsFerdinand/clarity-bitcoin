@@ -5,6 +5,16 @@
 (define-constant ERR-VARSLICE-TOO-LONG u4)
 (define-constant ERR-BAD-HEADER u5)
 (define-constant ERR-PROOF-TOO-SHORT u6)
+(define-constant ERR-TOO-MANY-WITNESSES u7)
+
+;; Reads the next two bytes from txbuff as a little-endian 16-bit integer, and updates the index.
+;; Returns (ok { uint16: uint, ctx: { txbuff: (buff 1024), index: uint } }) on success.
+;; Returns (err ERR-OUT-OF-BOUNDS) if we read past the end of txbuff
+(define-read-only (read-uint8 (ctx { txbuff: (buff 1024), index: uint}))
+    (let ((data (get txbuff ctx))
+          (base (get index ctx)))
+        (ok {uint8: (buff-to-uint-le (unwrap-panic (as-max-len? (unwrap! (slice? data base (+ base u1)) (err ERR-OUT-OF-BOUNDS)) u1))),
+             ctx: { txbuff: data, index: (+ u1 base)}})))
 
 ;; Reads the next two bytes from txbuff as a little-endian 16-bit integer, and updates the index.
 ;; Returns (ok { uint16: uint, ctx: { txbuff: (buff 1024), index: uint } }) on success.
@@ -165,29 +175,23 @@
 ;; Returns (err ERR-TOO-MANY-TXOUTS) if there are more than eight outputs to read.
 (define-read-only (read-next-txout (ignored bool)
                                    (state-res (response {ctx: { txbuff: (buff 1024), index: uint },
-                                                         remaining: uint,
                                                          txouts: (list 8 {value: uint,
                                                                           scriptPubKey: (buff 128)})}
                                                uint)))
     (match state-res
         state
-            (if (< u0 (get remaining state))
-                (let ((remaining (get remaining state))
-                      (parsed-value (try! (read-uint64 (get ctx state))))
-                      (parsed-script (try! (read-varslice (get ctx parsed-value))))
-                      (new-ctx (get ctx parsed-script)))
-                 (ok {ctx: new-ctx,
-                      remaining: (- remaining u1),
-                      txouts: (unwrap!
-                               (as-max-len?
-                                   (append (get txouts state)
-                                       {   value: (get uint64 parsed-value),
-                                           scriptPubKey: (unwrap! (as-max-len? (get varslice parsed-script) u128) (err ERR-VARSLICE-TOO-LONG))})
-                                u8)
-                               (err ERR-TOO-MANY-TXOUTS))}))
-                (ok state))
-        error
-            (err error)))
+          (let ((parsed-value (try! (read-uint64 (get ctx state))))
+                (parsed-script (try! (read-varslice (get ctx parsed-value))))
+                (new-ctx (get ctx parsed-script)))
+            (ok {ctx: new-ctx,
+                txouts: (unwrap!
+                          (as-max-len?
+                              (append (get txouts state)
+                                  {   value: (get uint64 parsed-value),
+                                      scriptPubKey: (unwrap! (as-max-len? (get varslice parsed-script) u128) (err ERR-VARSLICE-TOO-LONG))})
+                          u8)
+                          (err ERR-TOO-MANY-TXOUTS))}))
+        error (err error)))
 
 ;; Read all transaction outputs in a transaction.  Update the index to point to the first byte after the outputs, if all goes well.
 ;; Returns (ok { txouts: (list { ... }), remaining: uint, ctx: { txbuff: (buff 1024), index: uint } }) on success, and updates the index in ctx to point to the start of the tx outputs.
@@ -200,7 +204,7 @@
           (new-ctx (get ctx parsed-num-txouts)))
      (if (> num-txouts u8)
          (err ERR-TOO-MANY-TXOUTS)
-         (fold read-next-txout (unwrap-panic (slice? (list true true true true true true true true) u0 num-txouts)) (ok { ctx: new-ctx, remaining: num-txouts, txouts: (list)})))))
+         (fold read-next-txout (unwrap-panic (slice? (list true true true true true true true true) u0 num-txouts)) (ok { ctx: new-ctx, txouts: (list)})))))
 
 (define-read-only (read-next-element (ignored bool)
                                    (state-res (response {ctx: { txbuff: (buff 1024), index: uint },
@@ -231,14 +235,14 @@
           (let ((parsed-elements (try! (fold read-next-element (unwrap-panic (slice? (list true true true true true true true true) u0 varint)) (ok { ctx: ctx, elements: (list)})))))
             (ok {
               witnesses: (unwrap-panic (as-max-len? (append (get witnesses state) (get elements parsed-elements)) u8)),
-              ctx: (get ctx parsed-num-items)
+              ctx: (get ctx parsed-elements)
             })
           )
           (begin
             (asserts! true (err u1))
             (ok {
               witnesses: (unwrap-panic (as-max-len? (append (get witnesses state) (list)) u8)),
-              ctx: ctx
+              ctx: (get ctx parsed-num-items)
             })
           )
         )
@@ -247,12 +251,8 @@
   )
 )
 
-(define-public (read-witnesses (ctx { txbuff: (buff 1024), index: uint }) (num-txins uint))
-  (let ((new-ctx { ctx: ctx }))
-    (asserts! true (err u1))
-    (fold read-next-witness (unwrap-panic (slice? (list true true true true true true true true) u0 num-txins)) (ok (merge new-ctx { witnesses: (list (list)) })))
-    ;; (read-next-witness { txbuff: witness-slice, index: u0 })
-  )
+(define-read-only (read-witnesses (ctx { txbuff: (buff 1024), index: uint }) (num-txins uint))
+  (fold read-next-witness (unwrap-panic (slice? (list true true true true true true true true) u0 num-txins)) (ok { ctx: ctx, witnesses: (list) }))
 )
 
 ;; Helper functions for smart contract that want to use information of a Bitcoin transaction
@@ -284,14 +284,24 @@
 (define-read-only (parse-tx (tx (buff 1024)))
     (let ((ctx { txbuff: tx, index: u0})
           (parsed-version (try! (read-uint32 ctx)))
-          (parsed-txins (try! (read-txins (get ctx parsed-version))))
+          (parsed-segwit-marker (try! (read-uint8 (get ctx parsed-version))))
+          (parsed-segwit-version (try! (read-uint8 (get ctx parsed-segwit-marker))))
+          (parsed-txins (try! (read-txins (get ctx parsed-segwit-version))))
           (parsed-txouts (try! (read-txouts (get ctx parsed-txins))))
-          ;; (parsed-witnesses (try! (read-witnesses (get ctx parsed-txouts))))
-          (parsed-locktime (try! (read-uint32 (get ctx parsed-txouts)))))
+          (parsed-witnesses (try! (read-witnesses (get ctx parsed-txouts) (len (get txins parsed-txins)))))
+          (parsed-locktime (try! (read-uint32 (get ctx parsed-witnesses))))
+          )
      (ok {version: (get uint32 parsed-version),
+          segwit-marker: (get uint8 parsed-segwit-marker),
+          segwit-version: (get uint8 parsed-segwit-version),
           ins: (get txins parsed-txins),
           outs: (get txouts parsed-txouts),
-          locktime: (get uint32 parsed-locktime)})))
+          witnesses: (get witnesses parsed-witnesses),
+          locktime: (get uint32 parsed-locktime)
+        }
+      )
+  )
+)
 
 ;; Parse a Bitcoin block header.
 ;; Returns a tuple structured as folowed on success:
