@@ -1,7 +1,11 @@
 export function hexToBytes(hexString: string) {
-  return Uint8Array.from(
-    hexString.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16))
-  );
+  if(hexString.length === 0) {
+    return new Uint8Array(0);
+  } else {
+    return Uint8Array.from(
+      hexString.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16))
+    );
+  }
 }
 
 const byteToHexCache: string[] = new Array(0xff);
@@ -32,6 +36,18 @@ export interface TxObject {
   }[];
 }
 
+export interface SegwitTxObject extends TxObject {
+  segwitMarker: number;
+  segwitVersion: number;
+  witnesses: string[][];
+}
+
+function isSegwitTxObject(obj: TxObject | SegwitTxObject): obj is SegwitTxObject {
+  return (obj as SegwitTxObject).segwitMarker !== undefined
+    && (obj as SegwitTxObject).segwitVersion !== undefined
+    && (obj as SegwitTxObject).witnesses !== undefined;
+}
+
 export function expectHeaderObject(
   block: any,
   expectedHeaderObject: {
@@ -54,7 +70,7 @@ export function expectHeaderObject(
   headerObject.nonce.expectUint(expectedHeaderObject.nonce);
 }
 
-export function expectTxObject(block: any, expectedTxObject: TxObject) {
+export function expectTxObject(block: any, expectedTxObject: TxObject | SegwitTxObject) {
   const resultTxObject = block.receipts[0].result.expectOk().expectTuple();
   resultTxObject.version.expectUint(expectedTxObject.version);
   resultTxObject.locktime.expectUint(expectedTxObject.locktime);
@@ -79,5 +95,22 @@ export function expectTxObject(block: any, expectedTxObject: TxObject) {
       hexToBytes(expectedTxObject.outs[index].scriptPubKey)
     );
     outObject.value.expectUint(expectedTxObject.outs[index].value);
+  }
+
+  if (isSegwitTxObject(expectedTxObject)) {
+    for (let index = 0; index < expectedTxObject.witnesses.length; index++) {
+      const witnessObject = resultTxObject.witnesses.expectList()[index].expectList();
+      if(witnessObject.length) {
+        for (let witnessItemIndex = 0; witnessItemIndex < witnessObject.length; witnessItemIndex++) {
+          witnessObject[witnessItemIndex].expectBuff(
+            hexToBytes(expectedTxObject.witnesses[index][witnessItemIndex])
+          );
+        }
+      } else {
+        if (expectedTxObject.witnesses[index].length > 0) {
+          throw new Error("Expected witness item list to be empty");
+        }
+      }
+    }
   }
 }

@@ -239,7 +239,6 @@
             })
           )
           (begin
-            (asserts! true (err u1))
             (ok {
               witnesses: (unwrap-panic (as-max-len? (append (get witnesses state) (list)) u8)),
               ctx: (get ctx parsed-num-items)
