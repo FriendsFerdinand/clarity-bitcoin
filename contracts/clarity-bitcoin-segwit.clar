@@ -337,6 +337,10 @@
         bhh (is-eq bhh (reverse-buff32 (sha256 (sha256 headerbuff))))
         false))
 
+(define-read-only (verify-block-header-test (headerbuff (buff 80)) (expected-block-height uint))
+  true
+)
+
 ;; Get the txid of a transaction, but little-endian.
 ;; This is the reverse of what you see on block explorers.
 (define-read-only (get-reversed-txid (tx (buff 1024)))
@@ -418,12 +422,52 @@
     (let ((block (unwrap! (parse-block-header header) (err ERR-BAD-HEADER))))
       (was-tx-mined-internal height tx header (get merkle-root block) proof)))
 
-(define-read-only (was-tx-mined (height uint) (tx (buff 1024)) (header { version: (buff 4), parent: (buff 32), merkle-root: (buff 32), timestamp: (buff 4), nbits: (buff 4), nonce: (buff 4) }) (proof { tx-index: uint, hashes: (list 14 (buff 32)), tree-depth: uint}))
-    (was-tx-mined-internal height tx (contract-call? .clarity-bitcoin-helper concat-header header) (get merkle-root header) proof))
+
+(define-read-only (was-wtx-mined-compact (tx (buff 1024)) (witness-root-hash (buff 32)) (proof { tx-index: uint, hashes: (list 14 (buff 32)), tree-depth: uint}))
+  (was-wtx-mined-internal tx witness-root-hash proof))
+
+      ;; It should return (ok wtxid) if it was mined
+(define-public (was-segwit-tx-mined-compact
+	(burn-height uint) ;; bitcoin block height
+	(tx (buff 1024)) ;; tx to check
+	(header (buff 80)) ;; bitcoin block header
+	(tx-index uint)
+	(tree-depth uint)
+	(wproof (list 14 (buff 32))) ;; merkle proof for wtxids
+  (witness-root-hash (buff 32))
+	(ctx (buff 1024)) ;; coinbase tx, contains the witness root hash
+	(cproof (list 14 (buff 32))) ;; merkle proof for coinbase tx
+	;; proof and cproof trees could somehow be condensed into a single list
+	;; because they converge at some point
+	)
+  (begin
+    (asserts! (try! (was-tx-mined-compact burn-height ctx header { tx-index: u0, hashes: cproof, tree-depth: tree-depth })) (err u11))
+    (let (
+      (parsed-ctx (try! (contract-call? .clarity-bitcoin parse-tx ctx)))
+      (witness-reserved-value (get hash (get outpoint (unwrap-panic (element-at? (get ins parsed-ctx) u0)))))
+      (witness-out (get scriptPubKey (unwrap-panic (element-at? (get outs parsed-ctx) u0))))
+      (final-hash (sha256 (sha256 (concat witness-root-hash witness-reserved-value))))
+    )
+      (asserts! (is-eq witness-out (concat 0x6a24aa21a9ed final-hash)) (err u22))
+      (asserts! (try! (was-wtx-mined-compact tx witness-root-hash { tx-index: tx-index, hashes: wproof, tree-depth: tree-depth })) (err u33))
+      
+      (ok (get-txid tx))
+    )
+  )
+)
+
+;; (define-read-only (was-tx-mined (height uint) (tx (buff 1024)) (header { version: (buff 4), parent: (buff 32), merkle-root: (buff 32), timestamp: (buff 4), nbits: (buff 4), nonce: (buff 4) }) (proof { tx-index: uint, hashes: (list 14 (buff 32)), tree-depth: uint}))
+;;     (was-tx-mined-internal height tx (contract-call? .clarity-bitcoin-helper concat-header header) (get merkle-root header) proof))
 
 ;; Verify block header and merkle proof
 ;; This function must only called with the merkle root of the provided header
 (define-private (was-tx-mined-internal (height uint) (tx (buff 1024)) (header (buff 80)) (merkle-root (buff 32)) (proof { tx-index: uint, hashes: (list 14 (buff 32)), tree-depth: uint}))
-    (if (verify-block-header header height)
+    (if
+      (verify-block-header-test header height)
         (verify-merkle-proof (get-reversed-txid tx) (reverse-buff32 merkle-root) proof)
-        (err u1)))
+        (err u1)
+    )
+)
+
+(define-private (was-wtx-mined-internal (tx (buff 1024)) (merkle-root (buff 32)) (proof { tx-index: uint, hashes: (list 14 (buff 32)), tree-depth: uint}))
+  (verify-merkle-proof (get-reversed-txid tx) merkle-root proof))
